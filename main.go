@@ -176,6 +176,36 @@ func handleTelegram(c *gin.Context) {
 	handleIncomingUpdate(obj)
 }
 
+func polling() {
+	var updateId int64
+	c := http.Client{
+		Timeout: 65 * time.Second,
+	}
+	for {
+		url := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d&timeout=60", token, updateId)
+		resp, err := c.Get(url)
+		if err != nil {
+			log.Printf("Error polling: %s\n", err.Error())
+			continue
+		}
+		r, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("Error reading polling: %s\n", err.Error())
+			continue
+		}
+		var o []map[string]interface{}
+		err = json.Unmarshal(r, &o)
+		if err != nil {
+			log.Printf("Error parsing JSON: %s\n", err.Error())
+		} else if len(o) > 0 {
+			for _, v := range o {
+				go handleIncomingUpdate(v)
+			}
+		}
+		log.Printf("End of polling cycle.")
+	}
+}
+
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
