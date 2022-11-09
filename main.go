@@ -109,6 +109,11 @@ var (
 	defaultMode string
 )
 
+type upd struct {
+	Ok     bool                     `json:"ok"`
+	Result []map[string]interface{} `json:"result"`
+}
+
 func handleIncomingUpdate(obj map[string]interface{}) {
 	var m map[string]interface{}
 	if msg, ok := obj["message"]; ok {
@@ -193,12 +198,16 @@ func polling() {
 			log.Printf("Error reading polling: %s\n", err.Error())
 			continue
 		}
-		var o []map[string]interface{}
+		var o upd
 		err = json.Unmarshal(r, &o)
 		if err != nil {
 			log.Printf("Error parsing JSON: %s\n", err.Error())
-		} else if len(o) > 0 {
-			for _, v := range o {
+		} else if len(o.Result) > 0 {
+			for _, v := range o.Result {
+				nui := int64(v["update_id"].(float64))
+				if updateId < nui+1 {
+					updateId = nui + 1
+				}
 				go handleIncomingUpdate(v)
 			}
 		}
@@ -261,4 +270,6 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	r.POST("/C9eKiEvF", handleTelegram)
 	r.Run(bind)
+
+	polling()
 }
