@@ -80,7 +80,7 @@ func vnstat(mode string) ([]byte, error) {
 }
 
 func sendOne(c *http.Client) {
-	pic, err := vnstat("h")
+	pic, err := vnstat(defaultMode)
 	if err != nil {
 		log.Printf("Error at cron: %s\n", err.Error())
 		return
@@ -109,14 +109,7 @@ var (
 	defaultMode string
 )
 
-func handleTelegram(c *gin.Context) {
-	var obj map[string]interface{}
-	c.BindJSON(&obj)
-
-	defer c.JSON(http.StatusOK, gin.H{
-		"message": "pong",
-	})
-
+func handleIncomingUpdate(obj map[string]interface{}) {
 	var m map[string]interface{}
 	if msg, ok := obj["message"]; ok {
 		m = msg.(map[string]interface{})
@@ -170,6 +163,17 @@ func handleTelegram(c *gin.Context) {
 	} else {
 		log.Printf("Ignoring: %s\n", text)
 	}
+}
+
+func handleTelegram(c *gin.Context) {
+	var obj map[string]interface{}
+	c.BindJSON(&obj)
+
+	defer c.JSON(http.StatusOK, gin.H{
+		"message": "pong",
+	})
+
+	handleIncomingUpdate(obj)
 }
 
 func main() {
