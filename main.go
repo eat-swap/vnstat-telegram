@@ -123,8 +123,17 @@ func handleIncomingUpdate(obj map[string]interface{}) {
 		return
 	}
 
-	text := m["text"].(string)
-	from := m["from"].(map[string]interface{})
+	text, ok := m["text"].(string)
+	if !ok {
+		log.Printf("text is not string, abort")
+		return
+	}
+
+	from, ok := m["from"].(map[string]interface{})
+	if !ok {
+		log.Printf("cannot parse 'from', abort")
+		return
+	}
 
 	var from_id string
 	if fid, ok := from["id"]; ok {
