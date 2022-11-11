@@ -96,9 +96,24 @@ func sendOne(c *http.Client) {
 
 func cron(interval time.Duration) {
 	c := &http.Client{}
+
+	var mod int64 = -1
+	if (interval/time.Minute)%5 == 0 {
+		mod = int64(interval / time.Second)
+	} else {
+		log.Printf("interval/time.Minute = %d\n", interval/time.Minute)
+	}
+
 	for {
-		sendOne(c)
-		time.Sleep(interval)
+		go sendOne(c)
+		if mod < 0 {
+			time.Sleep(interval)
+		} else {
+			now := time.Now().Unix()
+			next := ((now/mod)+1)*mod + 1
+			log.Printf("Sleep until %s\n", time.Unix(next, 0).Format(time.RFC1123))
+			time.Sleep(time.Duration(next-now) * time.Second)
+		}
 	}
 }
 
