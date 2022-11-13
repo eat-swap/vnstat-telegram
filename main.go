@@ -48,6 +48,25 @@ func sendPhoto(c *http.Client, token, chatId, filename, caption string, photo []
 	return c.Do(req)
 }
 
+func sendMessage(c *http.Client, chatId, text string) (*http.Response, error) {
+	b := make(map[string]interface{})
+	b["chat_id"] = chatId
+	b["text"] = text
+	b["parse_mode"] = "MarkdownV2"
+	bb, _ := json.Marshal(b)
+
+	log.Printf("Sending message: %s\n", string(bb))
+
+	req, err := http.NewRequest("POST", "https://api.telegram.org/bot"+token+"/sendMessage", bytes.NewReader(bb))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	return c.Do(req)
+}
+
 func vnstat(mode string) ([]byte, error) {
 	path := os.TempDir() + "/" + randStr(32) + ".png"
 
@@ -117,6 +136,71 @@ func cron(interval time.Duration) {
 	}
 }
 
+type speedTestResult struct {
+	Ping struct {
+		Jitter  float64 `json:"jitter"`
+		Latency float64 `json:"latency"`
+	}
+	Download struct {
+		Bandwidth int64 `json:"bandwidth"`
+		Bytes     int64 `json:"bytes"`
+		Elapsed   int64 `json:"elapsed"`
+	}
+	Upload struct {
+		Bandwidth int64 `json:"bandwidth"`
+		Bytes     int64 `json:"bytes"`
+		Elapsed   int64 `json:"elapsed"`
+	}
+	PacketLoss int64  `json:"packetLoss"`
+	Isp        string `json:"isp"`
+	Interface  struct {
+		InternalIP string `json:"internalIp"`
+		Name       string `json:"name"`
+		MacAddr    string `json:"macAddr"`
+		IsVpn      bool   `json:"isVpn"`
+		ExternalIP string `json:"externalIp"`
+	}
+	Server struct {
+		ID       int64  `json:"id"`
+		Name     string `json:"name"`
+		Location string `json:"location"`
+		Country  string `json:"country"`
+		Host     string `json:"host"`
+		Port     int64  `json:"port"`
+		IP       string `json:"ip"`
+	}
+	Result struct {
+		ID  string `json:"id"`
+		URL string `json:"url"`
+	}
+}
+
+func speedTest() (*speedTestResult, error) {
+	cmd := exec.Command(
+		"speedtest",
+		"-f",
+		"json",
+	)
+	var stdout = &bytes.Buffer{}
+	cmd.Stdout = stdout
+	fmt.Printf("Executing: [%s]\n", cmd.String())
+
+	err := cmd.Run()
+	if err != nil {
+		return nil, err
+	}
+
+	b := stdout.Bytes()
+	var j speedTestResult
+	err = json.Unmarshal(b, &j)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("Speedtest result: %s\n", string(b))
+	return &j, nil
+}
+
 var (
 	token       string
 	chatId      string
@@ -167,31 +251,66 @@ func handleIncomingUpdate(obj map[string]interface{}) {
 	}
 
 	chat := m["chat"].(map[string]interface{})
+	c := &http.Client{}
 	const AVAIL = "5 5g h hg d m y t s hs vs "
-	if strings.Contains(AVAIL, text[1:]+" ") {
-		c := &http.Client{}
-		pic, err := vnstat(text[1:])
 
-		if err != nil {
-			log.Printf("vnstati Error: %s\n", err.Error())
+	var resp *http.Response
+	var err error
+
+	this_chat_id := strconv.FormatInt(int64(chat["id"].(float64)), 10)
+	if text == "/sp" {
+		log.Printf("Doing speedtest")
+		j, e := speedTest()
+		if e != nil {
+			log.Printf("Error at speedtest: %s\n", e.Error())
+			return
+		}
+		toSend := fmt.Sprintf("```\n"+
+			"Your IP:  [%s]\n"+
+			"ISP:      %s\n"+
+			"Ping:     %.2f ms, Jitter: %.2f ms\n"+
+			"Download: %.2f Mbps, used %.2f MB\n"+
+			"Upload:   %.2f Mbps, used %.2f MB\n"+
+			"Server:   %s (%s, %s) `[%s]`\n"+
+			"Packet Loss: %d%%\n"+
+			"```", j.Interface.ExternalIP,
+			j.Isp,
+			j.Ping.Latency, j.Ping.Jitter,
+			float64(j.Download.Bandwidth)/131072, float64(j.Download.Bytes)/1048576,
+			float64(j.Upload.Bandwidth)/131072, float64(j.Upload.Bytes)/1048576,
+			j.Server.Name, j.Server.Location, j.Server.Country, j.Server.IP,
+			j.PacketLoss,
+		)
+
+		toSend = strings.ReplaceAll(toSend, ".", "\\.")
+		toSend = strings.ReplaceAll(toSend, "(", "\\(")
+		toSend = strings.ReplaceAll(toSend, ")", "\\)")
+
+		resp, err = sendMessage(c, this_chat_id, toSend)
+	} else if strings.Contains(AVAIL, text[1:]+" ") {
+		pic, e := vnstat(text[1:])
+
+		if e != nil {
+			log.Printf("vnstati Error: %s\n", e.Error())
 			return
 		}
 
-		this_chat_id := strconv.FormatInt(int64(chat["id"].(float64)), 10)
-		resp, err := sendPhoto(c, token, this_chat_id, "v.png", time.Now().Format(time.RFC1123), pic)
-		if err != nil {
-			log.Printf("send telegram Error: %s\n", err.Error())
-			return
-		}
-		rr, err := io.ReadAll(resp.Body)
-		if err != nil {
-			log.Printf("Error at reading resp: %s\n", err.Error())
-			return
-		}
-		log.Printf("Successfully sent: %s\n", string(rr))
+		resp, err = sendPhoto(c, token, this_chat_id, "v.png", time.Now().Format(time.RFC1123), pic)
 	} else {
 		log.Printf("Ignoring: %s\n", text)
+		return
 	}
+
+	if err != nil {
+		log.Printf("send telegram Error: %s\n", err.Error())
+		return
+	}
+	rr, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Error at reading resp: %s\n", err.Error())
+		return
+	}
+	log.Printf("Successfully sent: %s\n", string(rr))
 }
 
 func handleTelegram(c *gin.Context) {
